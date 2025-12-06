@@ -93,29 +93,70 @@ with col1:
 # ---------------------------------------------------------
 if run_btn:
     with col2:
-        with st.spinner('Fetching live market context & running LSTM...'):           
+        with st.spinner('Fetching live market context & running LSTM...'):
+            
+            # --- STEP A: GET CONTEXT DATA (Robust Version) ---
+            stock_data_values = []
+            
+            # 1. Try Live API
             try:
-                stock_data = yf.Ticker("GOOG")
-                hist = stock_data.history(period="6mo")              
-                last_99_days = hist['Close'].values[-99:]              
-                input_sequence = np.append(last_99_days, current_price)
-                input_sequence = input_sequence.reshape(-1, 1)
+                stock = yf.Ticker("GOOG")
+                hist = stock.history(period="6mo")
+                
+                if len(hist) < 99:
+                    raise ValueError("API returned insufficient data")
+                
+                stock_data_values = hist['Close'].values
+                # st.success("Connected to Live Market Data") # Optional feedback
                 
             except Exception as e:
-                st.error(f"API Error: Could not fetch context data. {e}")
+            # 2. Fallback to CSV if API fails (The Cloud Fix)
+                # st.warning("Live feed unstable. Switching to cached data.") # Optional feedback
+                try:
+                    df = pd.read_csv("goog_fallback.csv")
+                    stock_data_values = df['Close'].values
+                except:
+                    st.error("Critical: Both Live API and Backup Data failed.")
+                    st.stop()
+
+            # Now we guarantee we have data. Take the last 99 points.
+            last_99_days = stock_data_values[-99:]
+            
+            # Check length again just to be safe
+            if len(last_99_days) != 99:
+                st.error(f"Data Error: Expected 99 historical days, got {len(last_99_days)}.")
                 st.stop()
-            current_seq_scaled = scaler.transform(input_sequence)
-            current_seq_scaled = current_seq_scaled.reshape(1, 100, 1)
+
+            # Append your user input 'current_price' to make it 100
+            input_sequence = np.append(last_99_days, current_price)
+            
+            # Reshape for the scaler (100 rows, 1 column)
+            input_sequence = input_sequence.reshape(-1, 1)
         
+            # --- STEP B: SCALE & RESHAPE ---
+            # Scale the data using the loaded scaler
+            current_seq_scaled = scaler.transform(input_sequence)
+            
+            # Reshape for LSTM: (1 sample, 100 timesteps, 1 feature)
+            current_seq_scaled = current_seq_scaled.reshape(1, 100, 1)
+            
+            # --- STEP C: PREDICT LOOP ---
             future_prices = []
             
             for _ in range(steps_to_predict):
+                # 1. Predict next step
                 pred_scaled = model.predict(current_seq_scaled, verbose=0)
+                
+                # 2. Inverse transform to get dollars
                 pred_price = scaler.inverse_transform(pred_scaled)[0][0]
                 future_prices.append(pred_price)
+                
+                # 3. Update the sequence (Sliding Window)
+                # Remove first element, add new prediction at the end
                 new_step = pred_scaled.reshape(1, 1, 1)
                 current_seq_scaled = np.append(current_seq_scaled[:, 1:, :], new_step, axis=1)
 
+            # --- STEP D: VISUALIZATION ---
             next_day_price = future_prices[0]
             delta = next_day_price - current_price
             
@@ -126,18 +167,14 @@ if run_btn:
             )
             
             st.markdown("#### Forecast Trajectory")
-            days_labels = ["0 (Today)"] + [f"{i} (+{i} Day)" for i in range(1, steps_to_predict + 1)]
             
             chart_data = pd.DataFrame({
-                "Day": days_labels,
+                "Day": ["Today"] + [f"+{i} Day(s)" for i in range(1, steps_to_predict + 1)],
                 "Price": [current_price] + future_prices
             })
             
             st.line_chart(chart_data.set_index("Day"), color="#4285F4")
 
-else:
-    with col2:
-        st.info("👈 Enter the latest price (or use the live default) and click Run.")
 
 st.divider()
 st.caption("""
@@ -145,3 +182,4 @@ st.caption("""
 While trained on real historical data, this is an academic demonstration of LSTM architecture capabilities, not financial advice.
 Built with TensorFlow, Python, and ☕.
 """)
+
