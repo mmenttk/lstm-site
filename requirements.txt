@@ -1,9 +1,7 @@
 streamlit
 tensorflow-cpu
-tensorflow
 numpy
 pandas 
 scikit-learn
 yfinance
 joblib
-
