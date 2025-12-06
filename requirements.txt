@@ -3,4 +3,5 @@ tensorflow-cpu
 numpy
 pandas 
 scikit-learn
+yfinance
 joblib
